@@ -1,0 +1,52 @@
+services:
+  # Default: audits the container's own filesystem/process namespace.
+  # This is the safe default - no elevated privileges, no host mounts.
+  # It's most useful for CI/image scanning, or as a sandboxed demo.
+  auditor:
+    build: .
+    image: linux-security-auditor:latest
+    container_name: linux-security-auditor
+    command: ["scan", "--full", "--format", "all"]
+    volumes:
+      - ./reports:/home/auditor/reports
+    # Read-only root filesystem for the container itself; the auditor
+    # only ever needs to *write* to the mounted reports/ and its own
+    # state directory (both explicitly writable below).
+    read_only: true
+    tmpfs:
+      - /home/auditor/.state
+    restart: "no"
+
+  # Optional: audit the ACTUAL HOST, not just the container.
+  #
+  # Trade-off, stated plainly: this requires sharing the host's PID and
+  # network namespaces and bind-mounting the host filesystem read-only.
+  # That's a meaningfully larger trust boundary than the default service
+  # above - only use this profile on a host you already administer, and
+  # never expose it to untrusted images/users.
+  #
+  # IMPORTANT LIMITATION: sharing namespaces makes host *processes* and
+  # *listening ports* visible to the network/system/permission modules,
+  # and configs/host-audit.yaml points log/permission scanning at the
+  # bind-mounted /host paths. It does NOT make the container read the
+  # host's /etc/ssh/sshd_config or /etc/sudoers - those checks still see
+  # the container's own copies. For a complete, accurate audit of a real
+  # host (SSH config, sudoers, package updates included), install the
+  # package natively with pip and run `linux-audit` directly on that
+  # host instead of through Docker.
+  #
+  # Run with: docker compose --profile host-audit up auditor-host
+  auditor-host:
+    build: .
+    image: linux-security-auditor:latest
+    container_name: linux-security-auditor-host
+    profiles: ["host-audit"]
+    pid: "host"
+    network_mode: "host"
+    volumes:
+      - /:/host:ro
+      - /var/log:/var/log:ro
+      - ./reports:/home/auditor/reports
+      - ./configs/host-audit.yaml:/home/auditor/host-audit.yaml:ro
+    command: ["scan", "--full", "--format", "all", "--config", "/home/auditor/host-audit.yaml"]
+    restart: "no"
